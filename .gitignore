@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+# Datos de proyecto (LandXML) — no se versionan: el repositorio es público
+web/public/data/*
+!web/public/data/README.md
+*.tsbuildinfo
