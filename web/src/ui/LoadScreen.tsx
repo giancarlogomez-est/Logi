@@ -8,7 +8,7 @@ export function LoadScreen({ checking }: { checking: boolean }) {
   const loadFile = useStore((s) => s.loadFile);
   const fileRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const busy = loading || checking;
+  const busy = !!loading || checking;
 
   return (
     <div className="load-screen">
@@ -23,7 +23,7 @@ export function LoadScreen({ checking }: { checking: boolean }) {
           e.preventDefault();
           setOver(false);
           const f = e.dataTransfer.files[0];
-          if (f) loadFile(f);
+          if (f) loadFile(f, f.name);
         }}
       >
         <div className="brand big">
@@ -39,7 +39,7 @@ export function LoadScreen({ checking }: { checking: boolean }) {
           {busy ? (
             <>
               <span className="spinner" />
-              <strong>{checking ? 'Buscando proyecto…' : 'Leyendo LandXML y construyendo la vía…'}</strong>
+              <strong>{checking ? 'Buscando proyecto…' : loading}</strong>
             </>
           ) : (
             <>
@@ -60,7 +60,7 @@ export function LoadScreen({ checking }: { checking: boolean }) {
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) loadFile(f);
+            if (f) loadFile(f, f.name);
             e.target.value = '';
           }}
         />

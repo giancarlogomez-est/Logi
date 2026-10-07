@@ -5,10 +5,13 @@ sobre la vía real, que se construye a partir del alineamiento exportado de Civi
 
 ## Fase 0 — Prototipo visual (este estado)
 
-- Lectura de LandXML 1.2 en el navegador: eje en planta (tangentes, curvas circulares y clotoides),
-  rasante (PVI y curvas verticales parabólicas) y secciones transversales.
-- Construcción del "mundo": terreno natural, taludes, plataforma y calzada con demarcación,
-  a partir de las superficies de las secciones (terreno y superficie terminada del corredor).
+- Lectura de LandXML 1.2 en el navegador (archivos de 100+ MB, en un Web Worker): uno o varios
+  alineamientos (tangentes, curvas circulares y clotoides), rasante (PVI y curvas verticales
+  parabólicas), secciones transversales y superficie TIN de terreno natural.
+- Varias calzadas en la misma escena, con selector de calzada activa.
+- Construcción del "mundo": terreno natural (TIN del levantamiento o, si no viene, el de las
+  secciones), taludes, andenes, plataforma y calzada con demarcación, a partir de la superficie
+  terminada del corredor en las secciones.
 - Todo se ubica por **abscisa + desplazamiento**; la conversión a 3D usa un origen local para no
   perder precisión con coordenadas MAGNA-SIRGAS.
 - Fichas de equipos, cuadrillas y acopios (datos de ejemplo) que se seleccionan y se **arrastran**
@@ -24,8 +27,8 @@ npm install
 npm run dev
 ```
 
-Abre http://localhost:5173 y arrastra tu archivo LandXML, o cópialo como
-`web/public/data/proyecto.xml` para que se cargue al iniciar (esa carpeta no se versiona).
+Abre http://localhost:5173 y arrastra tu archivo LandXML, o cópialo en `web/public/data/` para que
+se cargue al iniciar (ver el README de esa carpeta; no se versiona).
 
 Controles: arrastrar = desplazar · clic derecho = rotar · rueda = zoom · clic en una ficha = detalle.
 

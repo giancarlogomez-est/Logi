@@ -5,14 +5,15 @@ import { Icon, TypeBadge } from './icons';
 
 export function DetailPanel() {
   const ent = useStore((s) => s.entities.find((e) => e.id === s.selectedId));
-  const world = useStore((s) => s.world)!;
+  const site = useStore((s) => s.site)!;
   const select = useStore((s) => s.select);
   const flyTo = useStore((s) => s.flyTo);
   if (!ent) return null;
+  const road = site.roads[ent.roadId];
 
-  const z = world.surfaceZ(ent.sta, ent.off);
-  const zt = world.terrainZ(ent.sta, ent.off);
-  const p = world.align.offsetPoint(ent.sta, ent.off);
+  const z = road.surfaceZ(ent.sta, ent.off);
+  const zt = road.terrainZ(ent.sta, ent.off);
+  const p = road.align.offsetPoint(ent.sta, ent.off);
 
   return (
     <aside className="card detail">
@@ -24,7 +25,7 @@ export function DetailPanel() {
           </small>
           <strong>{ent.name}</strong>
         </div>
-        <button className="icon-btn" title="Centrar en el mapa" onClick={() => flyTo(ent.sta, ent.off)}>
+        <button className="icon-btn" title="Centrar en el mapa" onClick={() => flyTo(ent.roadId, ent.sta, ent.off)}>
           <Icon name="focus" />
         </button>
         <button className="icon-btn" title="Cerrar" onClick={() => select(null)}>
@@ -77,6 +78,12 @@ export function DetailPanel() {
             <dd>{v}</dd>
           </div>
         ))}
+        {site.roads.length > 1 && (
+          <div>
+            <dt>Calzada</dt>
+            <dd>{road.name}</dd>
+          </div>
+        )}
         <div>
           <dt>Coordenadas</dt>
           <dd>

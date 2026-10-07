@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { fmt, formatSta } from '../format';
-import { useStore } from '../store';
+import { useActiveRoad, useStore } from '../store';
 import { Icon, TYPE_COLOR } from './icons';
 
 const W = 1000;
@@ -8,8 +8,10 @@ const H = 100;
 
 /** Perfil longitudinal (terreno + rasante) como navegador de la obra */
 export function ProfileBar() {
-  const world = useStore((s) => s.world)!;
-  const entities = useStore((s) => s.entities);
+  const road = useActiveRoad()!;
+  const allEntities = useStore((s) => s.entities);
+  const entities = allEntities.filter((e) => e.roadId === road.id);
+  const multi = useStore((s) => (s.site?.roads.length ?? 1) > 1);
   const viewSta = useStore((s) => s.viewSta);
   const viewDist = useStore((s) => s.viewDist);
   const selectedId = useStore((s) => s.selectedId);
@@ -18,7 +20,7 @@ export function ProfileBar() {
   const ref = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
 
-  const { staStart, staEnd } = world;
+  const { staStart, staEnd } = road;
   const len = staEnd - staStart;
 
   const data = useMemo(() => {
@@ -29,8 +31,8 @@ export function ProfileBar() {
     for (let i = 0; i <= N; i++) {
       const s = staStart + (len * i) / N;
       sta.push(s);
-      ras.push(world.rasante(s));
-      ter.push(world.terrainZ(s, 0));
+      ras.push(road.rasante(s));
+      ter.push(road.terrainZ(s, 0));
     }
     const min = Math.min(...ras, ...ter);
     const max = Math.max(...ras, ...ter);
@@ -39,7 +41,7 @@ export function ProfileBar() {
     const x = (s: number) => ((s - staStart) / len) * W;
     const line = (arr: number[]) => arr.map((z, i) => `${i ? 'L' : 'M'}${x(sta[i]).toFixed(1)},${y(z).toFixed(2)}`).join('');
     return { terrainArea: `${line(ter)}L${W},${H}L0,${H}Z`, terrain: line(ter), rasante: line(ras), min, max };
-  }, [world, staStart, len]);
+  }, [road, staStart, len]);
 
   const pct = (s: number) => `${((s - staStart) / len) * 100}%`;
   const staAt = (clientX: number) => {
@@ -51,13 +53,13 @@ export function ProfileBar() {
   const tickStep = len > 20000 ? 5000 : len > 6000 ? 1000 : len > 2000 ? 500 : 100;
   for (let s = Math.ceil(staStart / tickStep) * tickStep; s <= staEnd; s += tickStep) ticks.push(s);
 
-  const hz = hover !== null ? { r: world.rasante(hover), t: world.terrainZ(hover, 0) } : null;
+  const hz = hover !== null ? { r: road.rasante(hover), t: road.terrainZ(hover, 0) } : null;
 
   return (
     <section className="card profile">
       <header>
         <h2>
-          <Icon name="layers" /> Perfil longitudinal
+          <Icon name="layers" /> Perfil longitudinal{multi && <span className="profile-road">{road.name}</span>}
         </h2>
         <span className="legend">
           <i className="lg-terrain" /> Terreno natural
@@ -73,7 +75,7 @@ export function ProfileBar() {
         ref={ref}
         onMouseMove={(e) => setHover(staAt(e.clientX))}
         onMouseLeave={() => setHover(null)}
-        onClick={(e) => flyTo(staAt(e.clientX))}
+        onClick={(e) => flyTo(road.id, staAt(e.clientX))}
       >
         <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
           <path d={data.terrainArea} className="p-area" />
@@ -90,7 +92,7 @@ export function ProfileBar() {
             onClick={(ev) => {
               ev.stopPropagation();
               select(e.id);
-              flyTo(e.sta, e.off);
+              flyTo(e.roadId, e.sta, e.off);
             }}
           />
         ))}

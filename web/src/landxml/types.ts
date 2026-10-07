@@ -39,14 +39,12 @@ export type Flat2D = Float64Array;
 
 export interface CrossSection {
   sta: number;
-  /** Superficies por nombre, como pares desplazamiento/cota */
+  /** Superficies por nombre (normalizado, sin abscisa), como pares desplazamiento/cota */
   surfaces: Map<string, Flat2D>;
 }
 
-export interface LandXmlProject {
-  fileName: string;
-  crs: { desc: string; epsg: string } | null;
-  application: string | null;
+/** Un alineamiento con su rasante y sus secciones */
+export interface AlignmentData {
   alignment: Alignment;
   /** Rasante (perfil de diseño) */
   profile: { name: string; pvis: ProfileVertex[] } | null;
@@ -58,4 +56,22 @@ export interface LandXmlProject {
   /** Capas de material encontradas en las secciones (para fases posteriores) */
   materialNames: string[];
   designSpeed: number | null;
+}
+
+/** Superficie TIN: puntos [e, n, z, ...] y triángulos visibles [i, j, k, ...] (índices 0-based) */
+export interface TinSurface {
+  name: string;
+  points: Float64Array;
+  faces: Uint32Array;
+}
+
+export interface LandXmlProject {
+  fileName: string;
+  crs: { desc: string; epsg: string } | null;
+  application: string | null;
+  alignments: AlignmentData[];
+  /** Superficie de terreno natural (TIN), si el archivo la trae */
+  terrain: TinSurface | null;
+  /** Nombres de todas las superficies TIN del archivo */
+  tinNames: string[];
 }

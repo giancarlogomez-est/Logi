@@ -1,7 +1,10 @@
-import type { LandXmlProject } from '../landxml/types';
+import { guessSurfaces } from '../landxml/parse';
+import type { AlignmentData, LandXmlProject } from '../landxml/types';
 import { AlignmentModel } from './alignment';
 import { ProfileModel } from './profile';
+import { CORRIDOR_MARGIN } from './meshes';
 import { buildSection, flatToPoints, interp, syntheticSection, type BuiltSection } from './sections';
+import { FootprintMask, TinModel } from './tin';
 
 /** Posición en la escena 3D (Y arriba; X = Este, −Z = Norte, relativas al origen local) */
 export interface WorldPoint {
@@ -17,17 +20,33 @@ export interface Station {
   off: number;
 }
 
+export interface Origin {
+  e: number;
+  n: number;
+  z: number;
+}
+
+export interface SurfaceChoice {
+  terrain: string;
+  design: string;
+}
+
+/** Paso del muestreo del terreno TIN a lo largo de cada sección (m) */
+const TIN_SAMPLE_STEP = 1;
+/** Diferencia máxima admisible entre la cota de diseño en el eje y la rasante (m) */
+const MAX_RASANTE_GAP = 5;
+
 /**
- * El "mundo" de la obra: todo se ubica por abscisa + desplazamiento y se convierte a 3D aquí.
- * Las coordenadas MAGNA-SIRGAS son de millones de metros, así que se trabaja con un origen local
- * en el inicio del eje para no perder precisión en la GPU.
+ * Una vía (un alineamiento): todo se ubica por abscisa + desplazamiento y se convierte a 3D aquí.
+ * Las coordenadas planas son de cientos de miles o millones de metros, así que se trabaja con un
+ * origen local común a todo el proyecto para no perder precisión en la GPU.
  */
-export class World {
-  readonly project: LandXmlProject;
+export class Road {
+  readonly id: number;
+  readonly data: AlignmentData;
   readonly align: AlignmentModel;
   readonly profile: ProfileModel | null;
   readonly sections: BuiltSection[];
-  readonly origin: { e: number; n: number; z: number };
   /** Eje muestreado cada 2 m (para proyectar puntos y para el minimapa) */
   readonly samples: { sta: Float64Array; e: Float64Array; n: Float64Array };
   readonly stats: {
@@ -35,36 +54,47 @@ export class World {
     rasanteDiffMax: number | null;
     generatedSlopes: number;
     synthetic: boolean;
+    terrainFromTin: boolean;
+    /** Secciones descartadas porque su cota en el eje no corresponde a la rasante */
+    discarded: number[];
   };
+  origin: Origin;
   private readonly secSta: Float64Array;
 
-  constructor(project: LandXmlProject, terrainName: string, designName: string) {
-    this.project = project;
-    this.align = new AlignmentModel(project.alignment);
-    this.profile = project.profile?.pvis.length ? new ProfileModel(project.profile.pvis) : null;
+  constructor(id: number, data: AlignmentData, choice: SurfaceChoice, tin: TinModel | null) {
+    this.id = id;
+    this.data = data;
+    this.align = new AlignmentModel(data.alignment);
+    this.profile = data.profile?.pvis.length ? new ProfileModel(data.profile.pvis) : null;
 
     const { staStart, staEnd } = this.align;
-    const raw = project.sections.filter(
-      (s) => s.sta >= staStart - 1 && s.sta <= staEnd + 1 && s.surfaces.has(terrainName) && s.surfaces.has(designName),
-    );
+    const terrainFromTin = !data.sections.some((s) => s.surfaces.has(choice.terrain)) && tin !== null;
     const built: BuiltSection[] = [];
-    let synthetic = false;
-    if (raw.length >= 2) {
-      for (const s of raw) {
-        if (built.length && s.sta - built[built.length - 1].sta < 0.01) continue;
-        const terrain = flatToPoints(s.surfaces.get(terrainName)!);
-        const design = flatToPoints(s.surfaces.get(designName)!);
-        if (terrain.length < 2 || design.length < 2) continue;
-        built.push(buildSection(s.sta, terrain, design));
+    const discarded: number[] = [];
+    for (const s of data.sections) {
+      if (s.sta < staStart - 1 || s.sta > staEnd + 1 || !s.surfaces.has(choice.design)) continue;
+      if (built.length && s.sta - built[built.length - 1].sta < 0.01) continue;
+      const design = flatToPoints(s.surfaces.get(choice.design)!);
+      if (design.length < 2) continue;
+      const terrain = terrainFromTin ? this.sampleTin(tin!, s.sta, design) : flatToPoints(s.surfaces.get(choice.terrain) ?? new Float64Array());
+      if (terrain.length < 2) continue;
+      const sec = buildSection(s.sta, terrain, design);
+      if (this.profile && Math.abs(this.profile.elevAt(s.sta) - sec.zAxis) > MAX_RASANTE_GAP) {
+        discarded.push(s.sta);
+        continue;
       }
+      built.push(sec);
     }
+    let synthetic = false;
     if (built.length < 2) {
       synthetic = true;
       built.length = 0;
-      const ground = pickCenterlineGround(project);
+      const ground = pickCenterlineGround(data);
       for (let sta = staStart; ; sta = Math.min(sta + 10, staEnd)) {
         const zd = this.profile?.elevAt(sta) ?? (ground ? interp(ground, sta) : 0);
-        const zg = ground ? interp(ground, sta) : zd - 0.5;
+        const p = this.align.evaluate(sta);
+        const zt = tin?.z(p.e, p.n);
+        const zg = zt !== undefined && Number.isFinite(zt) ? zt : ground ? interp(ground, sta) : zd - 0.5;
         built.push(syntheticSection(sta, zd, zg));
         if (sta >= staEnd) break;
       }
@@ -97,9 +127,26 @@ export class World {
       rasanteDiffMax,
       generatedSlopes: built.filter((s) => s.generated).length,
       synthetic,
+      terrainFromTin,
+      discarded,
     };
   }
 
+  /** Terreno de una sección leído del TIN a lo ancho de la línea de muestreo */
+  private sampleTin(tin: TinModel, sta: number, design: { o: number }[]) {
+    const halfW = Math.max(Math.abs(design[0].o), Math.abs(design[design.length - 1].o), 10);
+    const pts: { o: number; z: number }[] = [];
+    for (let o = -halfW; o <= halfW + 1e-6; o += TIN_SAMPLE_STEP) {
+      const p = this.align.offsetPoint(sta, o);
+      const z = tin.z(p.e, p.n);
+      if (Number.isFinite(z)) pts.push({ o, z });
+    }
+    return pts;
+  }
+
+  get name() {
+    return this.align.name;
+  }
   get staStart() {
     return this.align.staStart;
   }
@@ -198,11 +245,67 @@ export class World {
   locate(x: number, z: number, hint?: number, window?: number): Station {
     return this.projectEN(x + this.origin.e, -z + this.origin.n, hint, window);
   }
+
+  /** Polígonos (E, N) de la huella entre chaflanes (ampliada en `margin`), por tramo entre secciones */
+  footprintQuads(margin = 0): number[][] {
+    const quads: number[][] = [];
+    for (let i = 0; i < this.sections.length - 1; i++) {
+      const a = this.sections[i];
+      const b = this.sections[i + 1];
+      const pts = [
+        this.align.offsetPoint(a.sta, a.dayL - margin),
+        this.align.offsetPoint(a.sta, a.dayR + margin),
+        this.align.offsetPoint(b.sta, b.dayR + margin),
+        this.align.offsetPoint(b.sta, b.dayL - margin),
+      ];
+      quads.push(pts.flatMap((p) => [p.e, p.n]));
+    }
+    return quads;
+  }
+}
+
+/** El proyecto completo: una o varias vías y, si viene, el terreno TIN */
+export class Site {
+  readonly project: LandXmlProject;
+  readonly roads: Road[];
+  readonly tin: TinModel | null;
+  readonly origin: Origin;
+  readonly mask: FootprintMask | null;
+  readonly choices: SurfaceChoice[];
+
+  constructor(project: LandXmlProject, choices?: SurfaceChoice[], tin?: TinModel | null) {
+    this.project = project;
+    this.tin = tin !== undefined ? tin : project.terrain ? new TinModel(project.terrain) : null;
+    this.choices = project.alignments.map((a, i) => choices?.[i] ?? guessSurfaces(a.surfaceNames));
+    this.roads = project.alignments.map((a, i) => new Road(i, a, this.choices[i], this.tin));
+    this.origin = this.roads[0].origin;
+    for (const r of this.roads) r.origin = this.origin;
+
+    if (this.tin) {
+      const t = this.tin;
+      this.mask = new FootprintMask(t.minE, t.minN, t.maxE, t.maxN);
+      for (const r of this.roads) for (const q of r.footprintQuads(CORRIDOR_MARGIN)) this.mask.fillPolygon(q, 2);
+      for (const r of this.roads) for (const q of r.footprintQuads()) this.mask.fillPolygon(q, 1);
+    } else {
+      this.mask = null;
+    }
+  }
+
+  /** Vía más cercana a un punto de la escena */
+  nearest(x: number, z: number, hints?: number[]): { road: Road; st: Station } {
+    let best: { road: Road; st: Station } | null = null;
+    for (const road of this.roads) {
+      let st = road.locate(x, z, hints?.[road.id], 600);
+      if (Math.abs(st.off) > 150) st = road.locate(x, z);
+      if (!best || Math.abs(st.off) < Math.abs(best.st.off)) best = { road, st };
+    }
+    return best!;
+  }
 }
 
 /** Perfil de terreno sobre el eje (descarta los perfiles desplazados tipo "… - 5.450") */
-function pickCenterlineGround(project: LandXmlProject) {
-  const g = project.groundProfiles;
+function pickCenterlineGround(data: AlignmentData) {
+  const g = data.groundProfiles;
   const pick = g.find((p) => !/-\s*-?\d+(\.\d+)?\s*$/.test(p.name)) ?? g[0];
   if (!pick) return null;
   const pts = flatToPoints(pick.points);

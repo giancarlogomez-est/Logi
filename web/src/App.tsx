@@ -10,28 +10,46 @@ import { ProjectInfo } from './ui/ProjectInfo';
 import { ResourcePanel } from './ui/ResourcePanel';
 import { TopBar } from './ui/TopBar';
 
-/** Si existe public/data/proyecto.xml (excluido de git) se carga al iniciar */
-const AUTOLOAD = 'data/proyecto.xml';
+/**
+ * Carga automática desde public/data (excluida de git): el archivo indicado en proyecto.json
+ * ({ "archivo": "…xml" }) o, si no existe, proyecto.xml
+ */
+async function findAutoload(): Promise<string> {
+  try {
+    const r = await fetch('data/proyecto.json');
+    if (r.ok) {
+      const m = (await r.json()) as { archivo?: string };
+      if (m.archivo) return m.archivo;
+    }
+  } catch {
+    // sin manifiesto
+  }
+  return 'proyecto.xml';
+}
 
 export default function App() {
-  const world = useStore((s) => s.world);
+  const site = useStore((s) => s.site);
   const loading = useStore((s) => s.loading);
   const error = useStore((s) => s.error);
   const showInfo = useStore((s) => s.showInfo);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    fetch(AUTOLOAD)
-      .then((r) => (r.ok ? r.text() : null))
-      .then((text) => {
+    findAutoload()
+      .then(async (name) => {
+        const r = await fetch(`data/${encodeURIComponent(name)}`);
+        const blob = r.ok ? await r.blob() : null;
         // el servidor de desarrollo puede responder index.html para rutas inexistentes
-        if (text && text.slice(0, 2000).includes('<LandXML')) useStore.getState().loadText(text, 'proyecto.xml');
+        if (blob && (await blob.slice(0, 2000).text()).includes('<LandXML')) {
+          setChecking(false);
+          await useStore.getState().loadFile(blob, name);
+        }
       })
       .catch(() => {})
       .finally(() => setChecking(false));
   }, []);
 
-  if (!world) return <LoadScreen checking={checking} />;
+  if (!site) return <LoadScreen checking={checking} />;
 
   return (
     <div className="app">
@@ -49,7 +67,7 @@ export default function App() {
       {showInfo && <ProjectInfo />}
       {loading && (
         <div className="loading-overlay">
-          <span className="spinner" /> Leyendo LandXML…
+          <span className="spinner" /> {loading}
         </div>
       )}
       {error && <div className="toast-error">{error}</div>}

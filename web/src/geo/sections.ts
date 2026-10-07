@@ -31,7 +31,7 @@ const CUT_SLOPE = 1 / 1; // corte 1H:1V
 const FILL_SLOPE = 1 / 1.5; // relleno 1.5H:1V
 const DAYLIGHT_TOL = 0.15;
 const PLATFORM_MAX = 1.6;
-const DESIGN_LIMIT = 59.5;
+const SAMPLE_EDGE_TOL = 0.1;
 
 interface P2 {
   o: number;
@@ -100,8 +100,14 @@ export function buildSection(sta: number, terrainPts: P2[], designPts: P2[]): Bu
   const tMin = terrain.o[0];
   const tMax = terrain.o[terrain.o.length - 1];
 
-  // Civil 3D extrapola la superficie del corredor hasta ±60 m: esos extremos no son diseño real
-  const design = designPts.filter((p) => Math.abs(p.o) < DESIGN_LIMIT && p.o > tMin && p.o < tMax);
+  // Civil 3D extrapola la superficie del corredor hasta el ancho de la línea de muestreo (±40, ±60 m…):
+  // si ambos extremos están a esa distancia, no son diseño real
+  const halfW = Math.max(Math.abs(designPts[0].o), Math.abs(designPts[designPts.length - 1].o));
+  const trimEnds =
+    designPts.length > 4 &&
+    Math.abs(Math.abs(designPts[0].o) - halfW) < SAMPLE_EDGE_TOL &&
+    Math.abs(Math.abs(designPts[designPts.length - 1].o) - halfW) < SAMPLE_EDGE_TOL;
+  const design = designPts.filter((p) => (!trimEnds || Math.abs(p.o) < halfW - SAMPLE_EDGE_TOL) && p.o > tMin && p.o < tMax);
   const designPoly = toPoly(design);
   const zAxis = interp(designPoly, 0);
 
@@ -110,8 +116,14 @@ export function buildSection(sta: number, terrainPts: P2[], designPts: P2[]): Bu
   const cwR = right.length ? right[0].o : 3.65;
   const cwL = left.length ? left[left.length - 1].o : -3.65;
 
-  const rightDes = design.filter((p) => p.o >= cwR);
-  const leftDes = design.filter((p) => p.o <= cwL).reverse();
+  // Hacia afuera, el chaflán es el primer punto que toca el terreno; lo que sigue es triangulación
+  // de la superficie del corredor más allá del talud, no diseño
+  const toDaylight = (pts: P2[]) => {
+    const k = pts.findIndex((p, i) => i > 0 && Math.abs(p.z - interp(terrain, p.o)) <= DAYLIGHT_TOL);
+    return k > 0 ? pts.slice(0, k + 1) : pts;
+  };
+  const rightDes = toDaylight(design.filter((p) => p.o >= cwR));
+  const leftDes = toDaylight(design.filter((p) => p.o <= cwL).reverse());
   if (!rightDes.length) rightDes.push({ o: cwR, z: zAxis });
   if (!leftDes.length) leftDes.push({ o: cwL, z: zAxis });
 

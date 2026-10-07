@@ -5,8 +5,8 @@ import { Mesh, Plane, Vector3, type DirectionalLight, type PerspectiveCamera } f
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
 import { FOOTPRINT, type Entity } from '../data/demo';
 import { buildGroundGeometry, buildMarkingGeometry, buildRoadGeometry, edgeLineLeft, edgeLineRight } from '../geo/meshes';
-import type { World } from '../geo/world';
-import { useStore } from '../store';
+import type { Road, Site } from '../geo/world';
+import { useActiveRoad, useStore } from '../store';
 import { LABELS_LAYER_ID, stationLabelOffset, visibleStations } from '../ui/Labels';
 import { EntityModel } from './models';
 
@@ -14,9 +14,9 @@ const SKY = '#e8eef6';
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
 export function Scene() {
-  const world = useStore((s) => s.world);
+  const site = useStore((s) => s.site);
   const select = useStore((s) => s.select);
-  if (!world) return null;
+  if (!site) return null;
   return (
     <Canvas
       className="scene"
@@ -31,11 +31,14 @@ export function Scene() {
       <color attach="background" args={[SKY]} />
       <fog attach="fog" args={[SKY, 2500, 12000]} />
       <Lights />
-      <WorldMesh world={world} />
-      <StationPosts world={world} />
+      {site.tin && <TerrainMesh site={site} />}
+      {site.roads.map((r) => (
+        <RoadMesh key={r.id} road={r} corridorOnly={!!site.tin} />
+      ))}
+      <StationPosts />
       <LabelProjector />
-      <Entities world={world} />
-      <CameraRig world={world} />
+      <Entities site={site} />
+      <CameraRig site={site} />
     </Canvas>
   );
 }
@@ -71,46 +74,59 @@ function Lights() {
   );
 }
 
-function WorldMesh({ world }: { world: World }) {
+/** Terreno natural del levantamiento (TIN), recortado bajo los corredores */
+function TerrainMesh({ site }: { site: Site }) {
+  const geo = useMemo(() => site.tin!.buildGeometry(site.origin, site.mask ?? undefined), [site]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return (
+    <mesh geometry={geo} receiveShadow>
+      <meshStandardMaterial vertexColors flatShading roughness={0.95} />
+    </mesh>
+  );
+}
+
+function RoadMesh({ road, corridorOnly }: { road: Road; corridorOnly: boolean }) {
   const geo = useMemo(
     () => ({
-      ground: buildGroundGeometry(world),
-      road: buildRoadGeometry(world),
-      center: buildMarkingGeometry(world, () => 0, 0.15),
-      edgeL: buildMarkingGeometry(world, edgeLineLeft, 0.15),
-      edgeR: buildMarkingGeometry(world, edgeLineRight, 0.15),
+      ground: buildGroundGeometry(road, corridorOnly),
+      road: buildRoadGeometry(road),
+      center: buildMarkingGeometry(road, () => 0, 0.15),
+      edgeL: buildMarkingGeometry(road, edgeLineLeft, 0.15),
+      edgeR: buildMarkingGeometry(road, edgeLineRight, 0.15),
     }),
-    [world],
+    [road, corridorOnly],
   );
   useEffect(() => () => Object.values(geo).forEach((g) => g.dispose()), [geo]);
   return (
     <group>
       <mesh geometry={geo.ground} receiveShadow>
-        <meshStandardMaterial vertexColors flatShading roughness={0.95} />
+        <meshStandardMaterial vertexColors flatShading roughness={0.95} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
       </mesh>
       <mesh geometry={geo.road} receiveShadow>
-        <meshStandardMaterial color="#5d6473" roughness={0.9} polygonOffset polygonOffsetFactor={-1} />
+        <meshStandardMaterial color="#5d6473" roughness={0.9} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
       <mesh geometry={geo.center}>
-        <meshStandardMaterial color="#ffc61a" roughness={0.6} polygonOffset polygonOffsetFactor={-4} />
+        <meshStandardMaterial color="#ffc61a" roughness={0.6} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
       </mesh>
       {[geo.edgeL, geo.edgeR].map((g, i) => (
         <mesh key={i} geometry={g}>
-          <meshStandardMaterial color="#ffffff" roughness={0.6} polygonOffset polygonOffsetFactor={-4} />
+          <meshStandardMaterial color="#ffffff" roughness={0.6} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
         </mesh>
       ))}
     </group>
   );
 }
 
-/** Hitos (postes) en las abscisas visibles; el texto lo pone LabelsLayer */
-function StationPosts({ world }: { world: World }) {
+/** Hitos (postes) en las abscisas visibles de la vía activa; el texto lo pone LabelsLayer */
+function StationPosts() {
+  const road = useActiveRoad();
   const viewSta = useStore((s) => s.viewSta);
   const viewDist = useStore((s) => s.viewDist);
+  if (!road) return null;
   return (
     <>
-      {visibleStations(world, viewSta, viewDist).map((s) => {
-        const p = world.toWorld(s, stationLabelOffset(world, s));
+      {visibleStations(road, viewSta, viewDist).map((s) => {
+        const p = road.toWorld(s, stationLabelOffset(road, s));
         return (
           <mesh key={s} position={[p.x, p.y + 0.9, p.z]} castShadow>
             <boxGeometry args={[0.3, 1.8, 0.3]} />
@@ -140,18 +156,18 @@ function LabelProjector() {
   return null;
 }
 
-function Entities({ world }: { world: World }) {
+function Entities({ site }: { site: Site }) {
   const entities = useStore((s) => s.entities);
   return (
     <>
       {entities.map((e) => (
-        <EntityView key={e.id} ent={e} world={world} />
+        <EntityView key={e.id} ent={e} road={site.roads[e.roadId]} />
       ))}
     </>
   );
 }
 
-function EntityView({ ent, world }: { ent: Entity; world: World }) {
+function EntityView({ ent, road }: { ent: Entity; road: Road }) {
   const selected = useStore((s) => s.selectedId === ent.id);
   const select = useStore((s) => s.select);
   const moveEntity = useStore((s) => s.moveEntity);
@@ -161,12 +177,13 @@ function EntityView({ ent, world }: { ent: Entity; world: World }) {
   const [dragging, setDragging] = useState(false);
   useCursor(hover || dragging, dragging ? 'grabbing' : 'grab');
 
-  const p = world.toWorld(ent.sta, ent.off);
+  const p = road.toWorld(ent.sta, ent.off);
   const rotY = p.theta + (ent.facing < 0 ? Math.PI : 0);
 
   const onDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     select(ent.id);
+    useStore.getState().setActiveRoad(road.id);
     (e.target as unknown as Element).setPointerCapture(e.pointerId);
     drag.current = new Plane(new Vector3(0, 1, 0), -p.y);
     setDragging(true);
@@ -177,8 +194,8 @@ function EntityView({ ent, world }: { ent: Entity; world: World }) {
     e.stopPropagation();
     const hit = new Vector3();
     if (!e.ray.intersectPlane(drag.current, hit)) return;
-    const st = world.locate(hit.x, hit.z, ent.sta, 300);
-    moveEntity(ent.id, clamp(st.sta, world.staStart, world.staEnd), clamp(st.off, -55, 55));
+    const st = road.locate(hit.x, hit.z, ent.sta, 300);
+    moveEntity(ent.id, clamp(st.sta, road.staStart, road.staEnd), clamp(st.off, -55, 55));
   };
   const onUp = (e: ThreeEvent<PointerEvent>) => {
     if (!drag.current) return;
@@ -222,19 +239,19 @@ function SelectionRing({ radius, strong }: { radius: number; strong: boolean }) 
   );
 }
 
-/** Controles tipo mapa + vuelo a una abscisa + seguimiento de la abscisa en vista */
-function CameraRig({ world }: { world: World }) {
+/** Controles tipo mapa + vuelo a una abscisa + seguimiento de la vía y abscisa en vista */
+function CameraRig({ site }: { site: Site }) {
   const fly = useStore((s) => s.flyRequest);
-  const setView = useStore((s) => s.setView);
   const camera = useThree((s) => s.camera) as PerspectiveCamera;
   const controls = useThree((s) => s.controls) as MapControlsImpl | null;
   const anim = useRef<{ from: Vector3; to: Vector3; camFrom: Vector3; camTo: Vector3; t: number } | null>(null);
   const frame = useRef(0);
-  const lastSta = useRef(world.staStart);
+  const hints = useRef<number[]>(site.roads.map((r) => r.staStart));
 
   useEffect(() => {
     if (!fly || !controls) return;
-    const p = world.toWorld(fly.sta, fly.off);
+    const road = site.roads[fly.roadId] ?? site.roads[0];
+    const p = road.toWorld(fly.sta, fly.off);
     const to = new Vector3(p.x, p.y, p.z);
     let offset = camera.position.clone().sub(controls.target);
     if (fly.reframe || offset.length() > 1500) {
@@ -244,7 +261,7 @@ function CameraRig({ world }: { world: World }) {
       offset = right.multiplyScalar(0.6 * dist).add(fwd.multiplyScalar(-0.45 * dist)).add(new Vector3(0, 0.62 * dist, 0));
     }
     const camTo = to.clone().add(offset);
-    lastSta.current = fly.sta;
+    hints.current[road.id] = fly.sta;
     if (fly.instant) {
       controls.target.copy(to);
       camera.position.copy(camTo);
@@ -253,7 +270,7 @@ function CameraRig({ world }: { world: World }) {
     } else {
       anim.current = { from: controls.target.clone(), to, camFrom: camera.position.clone(), camTo, t: 0 };
     }
-  }, [fly, controls, camera, world]);
+  }, [fly, controls, camera, site]);
 
   useFrame((_, dt) => {
     if (!controls) return;
@@ -268,18 +285,24 @@ function CameraRig({ world }: { world: World }) {
     }
     if (++frame.current % 6 !== 0) return;
     const t = controls.target;
-    const st = world.locate(t.x, t.z, lastSta.current, 600);
-    lastSta.current = st.sta;
+    const store = useStore.getState();
+    // Durante un vuelo se respeta la vía pedida; si no, la vía en vista es la más cercana al centro
+    const { road, st } = a
+      ? { road: site.roads[store.activeRoad], st: site.roads[store.activeRoad].locate(t.x, t.z, hints.current[store.activeRoad], 600) }
+      : site.nearest(t.x, t.z, hints.current);
+    hints.current[road.id] = st.sta;
     if (!a) {
-      // mantener el centro de órbita sobre la superficie al desplazarse por la vía
-      const gy = world.surfaceZ(st.sta, clamp(st.off, -55, 55)) - world.origin.z;
+      store.setActiveRoad(road.id);
+      // mantener el centro de órbita sobre la superficie al desplazarse
+      const zt = site.tin && Math.abs(st.off) > 45 ? site.tin.z(t.x + site.origin.e, -t.z + site.origin.n) : NaN;
+      const gy = (Number.isFinite(zt) ? zt : road.surfaceZ(st.sta, clamp(st.off, -55, 55))) - site.origin.z;
       const dy = (gy - t.y) * 0.3;
       if (Math.abs(dy) > 0.01) {
         t.y += dy;
         camera.position.y += dy;
       }
     }
-    setView(st.sta, camera.position.distanceTo(t));
+    store.setView(st.sta, camera.position.distanceTo(t));
   });
 
   return (

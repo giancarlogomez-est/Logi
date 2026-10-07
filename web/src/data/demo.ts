@@ -1,4 +1,4 @@
-import type { World } from '../geo/world';
+import type { Site } from '../geo/world';
 
 export type EntityType = 'volqueta' | 'excavadora' | 'motoniveladora' | 'vibrocompactador' | 'cuadrilla' | 'acopio';
 export type EntityStatus = 'operando' | 'espera' | 'mantenimiento';
@@ -8,6 +8,8 @@ export interface Entity {
   code: string;
   type: EntityType;
   name: string;
+  /** Vía (alineamiento) sobre la que está ubicado */
+  roadId: number;
   sta: number;
   off: number;
   /** 1 = mira en sentido del abscisado, −1 = en contra */
@@ -47,15 +49,16 @@ export const FOOTPRINT: Record<EntityType, number> = {
 };
 
 /** Datos de ejemplo para la Fase 0. En la Fase 1 vendrán de la base de datos. */
-export function createDemoEntities(world: World): Entity[] {
-  const at = (d: number) => Math.min(world.staStart + d, world.staEnd - 1);
-  return [
+export function createDemoEntities(site: Site): Entity[] {
+  const main = site.roads[0];
+  const other = site.roads[1] ?? main;
+  const list: Omit<Entity, 'roadId'>[] = [
     {
       id: 'exc-01',
       code: 'EXC-01',
       type: 'excavadora',
       name: 'Excavadora CAT 320',
-      sta: at(430),
+      sta: 430,
       off: -9,
       facing: 1,
       status: 'operando',
@@ -74,7 +77,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'VOL-01',
       type: 'volqueta',
       name: 'Volqueta doble troque 14 m³',
-      sta: at(395),
+      sta: 395,
       off: -2,
       facing: -1,
       status: 'operando',
@@ -93,7 +96,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'VOL-02',
       type: 'volqueta',
       name: 'Volqueta sencilla 7 m³',
-      sta: at(560),
+      sta: 560,
       off: 2,
       facing: 1,
       status: 'mantenimiento',
@@ -112,7 +115,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'MOT-01',
       type: 'motoniveladora',
       name: 'Motoniveladora CAT 140K',
-      sta: at(640),
+      sta: 640,
       off: 2,
       facing: 1,
       status: 'espera',
@@ -131,7 +134,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'VIB-01',
       type: 'vibrocompactador',
       name: 'Vibrocompactador 12 t',
-      sta: at(690),
+      sta: 690,
       off: -2,
       facing: 1,
       status: 'operando',
@@ -150,7 +153,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'CUA-01',
       type: 'cuadrilla',
       name: 'Cuadrilla de topografía',
-      sta: at(330),
+      sta: 330,
       off: 7,
       facing: 1,
       status: 'operando',
@@ -168,7 +171,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'CUA-02',
       type: 'cuadrilla',
       name: 'Cuadrilla de drenaje',
-      sta: at(760),
+      sta: 760,
       off: 7,
       facing: 1,
       status: 'operando',
@@ -186,7 +189,7 @@ export function createDemoEntities(world: World): Entity[] {
       code: 'ACO-01',
       type: 'acopio',
       name: 'Acopio base granular BG-A',
-      sta: at(250),
+      sta: 250,
       off: 16,
       facing: 1,
       status: 'operando',
@@ -201,4 +204,10 @@ export function createDemoEntities(world: World): Entity[] {
       ],
     },
   ];
+  // Con dos calzadas, la cuadrilla de drenaje, la volqueta en mantenimiento y el acopio van en la segunda
+  const onOther = new Set(['vol-02', 'cua-02', 'aco-01']);
+  return list.map((e) => {
+    const road = onOther.has(e.id) ? other : main;
+    return { ...e, roadId: road.id, sta: Math.min(road.staStart + e.sta, road.staEnd - 1) };
+  });
 }

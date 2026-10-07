@@ -1,14 +1,15 @@
 import { fmt, formatSta } from '../format';
-import { useStore } from '../store';
+import { useActiveRoad, useStore } from '../store';
 import { Icon } from './icons';
 
 export function ProjectInfo() {
-  const world = useStore((s) => s.world)!;
-  const terrain = useStore((s) => s.terrainSurface);
-  const design = useStore((s) => s.designSurface);
+  const site = useStore((s) => s.site)!;
+  const road = useActiveRoad()!;
   const setSurfaces = useStore((s) => s.setSurfaces);
   const close = () => useStore.getState().setShowInfo(false);
-  const { project, align, stats } = world;
+  const { project, tin } = site;
+  const { align, stats, data } = road;
+  const choice = site.choices[road.id];
   const c = align.counts();
 
   return (
@@ -26,9 +27,29 @@ export function ProjectInfo() {
             <dd>{project.fileName}</dd>
           </div>
           <div>
-            <dt>Alineamiento</dt>
-            <dd>{align.name}</dd>
+            <dt>Sistema de coordenadas</dt>
+            <dd>{project.crs?.desc ? `${project.crs.desc}${project.crs.epsg ? ` (EPSG ${project.crs.epsg})` : ''}` : 'No indicado'}</dd>
           </div>
+          <div>
+            <dt>Origen</dt>
+            <dd>{project.application ?? '—'}</dd>
+          </div>
+          <div>
+            <dt>Alineamientos</dt>
+            <dd>{site.roads.map((r) => `${r.name} (${fmt(r.align.length, 1)} m)`).join(' · ')}</dd>
+          </div>
+          <div>
+            <dt>Terreno natural</dt>
+            <dd>
+              {tin
+                ? `TIN ${tin.name}: ${fmt(tin.points.length / 3)} puntos, ${fmt(tin.faces.length / 3)} triángulos`
+                : 'Desde las secciones transversales'}
+            </dd>
+          </div>
+        </dl>
+
+        <h3>{site.roads.length > 1 ? `Calzada activa: ${road.name}` : 'Alineamiento'}</h3>
+        <dl>
           <div>
             <dt>Abscisado</dt>
             <dd>
@@ -43,39 +64,36 @@ export function ProjectInfo() {
           </div>
           <div>
             <dt>Rasante</dt>
-            <dd>{project.profile ? `${project.profile.name} (${project.profile.pvis.length} PVI)` : 'No incluida'}</dd>
+            <dd>{data.profile ? `${data.profile.name} (${data.profile.pvis.length} PVI)` : 'No incluida'}</dd>
           </div>
           <div>
-            <dt>Sistema de coordenadas</dt>
-            <dd>{project.crs ? `${project.crs.desc} (EPSG ${project.crs.epsg})` : 'No indicado'}</dd>
+            <dt>Secciones</dt>
+            <dd>{road.sections.length}</dd>
           </div>
-          <div>
-            <dt>Origen</dt>
-            <dd>{project.application ?? '—'}</dd>
-          </div>
-          {project.materialNames.length > 0 && (
+          {data.materialNames.length > 0 && (
             <div>
               <dt>Capas de material</dt>
-              <dd>{project.materialNames.join(' · ')}</dd>
+              <dd>{data.materialNames.join(' · ')}</dd>
             </div>
           )}
         </dl>
 
         <h3>Superficies de las secciones</h3>
-        {project.surfaceNames.length ? (
+        {data.surfaceNames.length ? (
           <div className="selects">
             <label>
               Terreno natural
-              <select value={terrain} onChange={(e) => setSurfaces(e.target.value, design)}>
-                {project.surfaceNames.map((n) => (
+              <select value={stats.terrainFromTin ? '' : choice.terrain} onChange={(e) => setSurfaces(road.id, { ...choice, terrain: e.target.value })}>
+                {tin && <option value="">TIN: {tin.name}</option>}
+                {data.surfaceNames.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
               </select>
             </label>
             <label>
               Superficie terminada (diseño)
-              <select value={design} onChange={(e) => setSurfaces(terrain, e.target.value)}>
-                {project.surfaceNames.map((n) => (
+              <select value={choice.design} onChange={(e) => setSurfaces(road.id, { ...choice, design: e.target.value })}>
+                {data.surfaceNames.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
               </select>
@@ -95,13 +113,20 @@ export function ProjectInfo() {
               Rasante calculada contra secciones: máx. {fmt(stats.rasanteDiffMax * 1000, 1)} mm
             </li>
           )}
+          {stats.discarded.length > 0 && (
+            <li className="warn">
+              {stats.discarded.length === 1 ? 'Se descartó la sección' : `Se descartaron ${stats.discarded.length} secciones`}{' '}
+              {stats.discarded.slice(0, 5).map((s) => formatSta(s)).join(', ')}
+              {stats.discarded.length > 5 ? '…' : ''}: su cota en el eje se aleja más de 5 m de la rasante (posible error de exportación del corredor).
+            </li>
+          )}
           {stats.synthetic ? (
-            <li className="warn">Sin secciones transversales: se usa una calzada típica de 7.30 m sobre terreno plano.</li>
+            <li className="warn">Sin secciones transversales: se usa una calzada típica de 7.30 m.</li>
           ) : (
             <li className={stats.generatedSlopes ? 'warn' : 'ok'}>
               {stats.generatedSlopes
-                ? `${stats.generatedSlopes} de ${world.sections.length} secciones sin talud en el corredor: se dibujó un talud aproximado (corte 1H:1V, relleno 1.5H:1V).`
-                : 'Todas las secciones traen sus taludes.'}
+                ? `${stats.generatedSlopes} de ${road.sections.length} secciones sin talud hasta el terreno: se dibujó un talud aproximado (corte 1H:1V, relleno 1.5H:1V).`
+                : 'Todas las secciones traen sus taludes hasta el terreno.'}
             </li>
           )}
         </ul>

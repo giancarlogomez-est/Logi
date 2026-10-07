@@ -2,6 +2,7 @@ import { STATUS_LABEL, type Entity, type EntityType } from '../data/demo';
 import { formatSta } from '../format';
 import { useStore } from '../store';
 import { TypeBadge } from './icons';
+import { roadShortName } from './roads';
 
 const GROUPS: { title: string; types: EntityType[] }[] = [
   { title: 'Equipos', types: ['excavadora', 'volqueta', 'motoniveladora', 'vibrocompactador'] },
@@ -14,10 +15,11 @@ export function ResourcePanel() {
   const selectedId = useStore((s) => s.selectedId);
   const select = useStore((s) => s.select);
   const flyTo = useStore((s) => s.flyTo);
+  const roadCount = useStore((s) => s.site?.roads.length ?? 1);
 
   const pick = (e: Entity) => {
     select(e.id);
-    flyTo(e.sta, e.off);
+    flyTo(e.roadId, e.sta, e.off);
   };
 
   return (
@@ -40,7 +42,10 @@ export function ResourcePanel() {
                 </span>
                 <span className="res-meta">
                   <span className={`dot ${e.status}`} title={STATUS_LABEL[e.status]} />
-                  <small>{formatSta(e.sta, 0)}</small>
+                  <small>
+                    {roadCount > 1 && <b className="road-chip">{roadShortName(e.roadId)}</b>}
+                    {formatSta(e.sta, 0)}
+                  </small>
                 </span>
               </button>
             ))}
